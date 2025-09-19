@@ -5,10 +5,10 @@ from typing import Dict, List, Optional, Any
 @dataclass
 class PostgreSQLConfig:
     """Configuração específica para PostgreSQL"""
-    host: str = os.getenv('DB_HOST', 'localhost')
+    host: str = os.getenv('DB_HOST', 'svlxdlkvip')
     port: int = int(os.getenv('DB_PORT', '5432'))
-    database: str = os.getenv('DB_NAME', 'postgres')
-    username: str = os.getenv('DB_USER', 'postgres') 
+    database: str = os.getenv('DB_NAME', 'dwdb')
+    username: str = os.getenv('DB_USER', 'lyandra.lisboa') 
     password: str = os.getenv('DB_PASSWORD', 'password')
     schema: str = os.getenv('DB_SCHEMA', 'public')
     
