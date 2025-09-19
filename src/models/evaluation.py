@@ -1,21 +1,45 @@
+"""
+Avaliação do modelo K-Modes
+"""
+import os
+import joblib
+import logging
 import pandas as pd
-from sklearn.metrics import silhouette_score, adjusted_rand_score
+from sklearn.metrics import silhouette_score
+from src.data.extractors import load_data
+from src.data.validators import validate_dataframe
 
-def evaluate_clustering(model, df: pd.DataFrame, cat_cols: list = None) -> dict:
+# Configuração de logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+MODEL_PATH = "models/kmodes_churn.pkl"
+
+def evaluate_model():
     """
-    Avalia o modelo de cluster usando silhouette score
+    Avalia o modelo K-Modes usando métricas de clusterização.
     """
-    if cat_cols is None:
-        cat_cols = df.select_dtypes(['category']).columns.tolist()
-    cat_idx = [df.columns.get_loc(c) for c in cat_cols]
-    
-    labels = model.predict(df, categorical=cat_idx)
-    
-    # Silhouette Score (apenas para dados numéricos)
-    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
-    score = silhouette_score(df[numeric_cols], labels)
-    
-    return {
-        "silhouette_score": score,
-        "labels": labels
-    }
+    logging.info("Carregando dados...")
+    df = load_data()
+    validate_dataframe(df)
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Modelo não encontrado em {MODEL_PATH}. Treine primeiro.")
+
+    model = joblib.load(MODEL_PATH)
+
+    logging.info("Gerando previsões para avaliação...")
+    preds = model.predict(df)
+
+    # Avaliação por silhouette (métrica de qualidade de clusters)
+    score = silhouette_score(df, preds, metric="hamming")
+    logging.info(f"Silhouette Score: {score:.4f} (quanto mais próximo de 1, melhor)")
+
+    # Distribuição dos clusters
+    dist = pd.Series(preds).value_counts()
+    logging.info(f"Distribuição dos clusters:\n{dist}")
+
+    return score, dist
+
+
+if __name__ == "__main__":
+    evaluate_model()
