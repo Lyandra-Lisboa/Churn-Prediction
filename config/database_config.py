@@ -10,11 +10,30 @@ class PostgreSQLConfig:
     database: str = os.getenv('DB_NAME', 'dwdb')
     username: str = os.getenv('DB_USER', 'lyandra.lisboa') 
     password: str = os.getenv('DB_PASSWORD', 'password')
-    schema: str = os.getenv('DB_SCHEMA', 'ngweb')  # Schema atualizado conforme tabelas
+    schema: str = os.getenv('DB_SCHEMA', 'ngweb')
+    
+    # Configurações de pool de conexões
+    pool_size: int = int(os.getenv('DB_POOL_SIZE', '10'))
+    max_overflow: int = int(os.getenv('DB_MAX_OVERFLOW', '20'))
+    pool_timeout: int = int(os.getenv('DB_POOL_TIMEOUT', '30'))
+    pool_recycle: int = int(os.getenv('DB_POOL_RECYCLE', '3600'))
+    
+    # Configurações de SSL
+    ssl_mode: str = os.getenv('DB_SSL_MODE', 'prefer')
     
     def get_connection_string(self) -> str:
         """String de conexão PostgreSQL"""
         return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+    
+    def get_sqlalchemy_config(self) -> Dict[str, Any]:
+        """Configurações para SQLAlchemy"""
+        return {
+            'pool_size': self.pool_size,
+            'max_overflow': self.max_overflow,
+            'pool_timeout': self.pool_timeout,
+            'pool_recycle': self.pool_recycle,
+            'echo': os.getenv('DB_ECHO', 'False').lower() == 'true'
+        }
 
 @dataclass 
 class TableConfig:
@@ -25,12 +44,17 @@ class TableConfig:
     atendimento_table: str = "ngweb.tb_fat_ngweb_registro_atendimento" 
     cancelados_table: str = "ngweb.tb_fat_ngweb_dados_contrato_cancelado"
     
+    # TABELAS DE RESULTADO (se necessário criar)
+    clusters_table: str = "ngweb.tb_clusters_kmodes"
+    predictions_table: str = "ngweb.tb_churn_predictions"
+    features_table: str = "ngweb.tb_categorical_features"
+    
     # CONFIGURAÇÃO DE COLUNAS DAS TABELAS REAIS
     column_mapping: Dict[str, Dict[str, str]] = None
     
     def __post_init__(self):
         if self.column_mapping is None:
-            # MAPEAMENTO BASEADO NAS TABELAS REAIS DA LIGGA
+            # MAPEAMENTO OTIMIZADO BASEADO NAS TABELAS REAIS DA LIGGA
             self.column_mapping = {
                 # TABELA DE CHURN - tb_fat_ngweb_churn
                 "churn": {
@@ -116,3 +140,15 @@ class TableConfig:
                     "last_update": "last_update"
                 }
             }
+    
+    def get_table_columns(self, table_type: str) -> List[str]:
+        """Retorna lista de colunas para um tipo de tabela"""
+        if table_type in self.column_mapping:
+            return list(self.column_mapping[table_type].values())
+        return []
+    
+    def get_column_name(self, table_type: str, standard_name: str) -> Optional[str]:
+        """Converte nome padrão para nome real da coluna"""
+        if table_type in self.column_mapping:
+            return self.column_mapping[table_type].get(standard_name)
+        return None
