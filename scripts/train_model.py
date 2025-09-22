@@ -1,134 +1,153 @@
-import os
-import sys
-import joblib
-import logging
-import pandas as pd
-import numpy as np
-from pathlib import Path
-from datetime import datetime
-import argparse
-import json
-from typing import List, Optional, Union
 from config import settings, kmodes_config, model_config
 from src.data.extractors import DataExtractor
 from src.features.categorical_engineering import preprocess_data
 from src.features.transformers import CategoricalTransformer
-from src.clustering.cluster_predictor import ClusterPredictor
+from src.clustering.kmodes_engine import KModesEngine
+from src.clustering.cluster_analyzer import ClusterAnalyzer
 
-# Configuração de logs usando settings
-log_config = settings.get_log_config()
-logging.basicConfig(
-    level=getattr(logging, log_config['level']),
-    format=log_config['format'],
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(f"logs/batch_prediction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-    ]
-)
-
-logger = logging.getLogger(__name__)
-
-class OptimizedBatchPredictor:
+class OptimizedModelTrainer:
     """
-    Classe integrada com configurações otimizadas
+    Trainer integrado com configurações otimizadas
     """
     
-    def __init__(self, model_path: Optional[str] = None, transformer_path: Optional[str] = None):
+    def __init__(self):
         # ✅ Usar configurações centralizadas
-        self.n_clusters = kmodes_config.n_clusters_range[1]  
-        self.batch_size = settings.batch_size
-        self.max_workers = settings.max_workers
+        self.kmodes_config = kmodes_config
+        self.model_config = model_config
+        self.settings = settings
         
-        # ✅ Usar estrutura de diretórios otimizada
-        self.models_dir = Path("models/clusters")
-        self.output_dir = Path("data/predictions")
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # ✅ Usar extractor integrado
+        # ✅ Componentes integrados
         self.extractor = DataExtractor()
+        self.kmodes_engine = KModesEngine()
+        self.analyzer = ClusterAnalyzer()
         
-        # ✅ Personas usando config
-        self.personas_info = self._load_personas_from_config()
+        # ✅ Diretórios corretos
+        self.models_dir = Path("models/clusters")
+        self.data_dir = Path("data/processed")
+        self.reports_dir = Path("reports/cluster_profiles")
         
-        self._load_model_and_transformer(model_path, transformer_path)
+        # Criar diretórios
+        for dir_path in [self.models_dir, self.data_dir, self.reports_dir]:
+            dir_path.mkdir(parents=True, exist_ok=True)
     
-    def _load_personas_from_config(self) -> dict:
-        """Carrega personas das configurações"""
-        # Pode vir de um arquivo de config ou ser definido em feature_config
-        return {
-            0: {"nome": "Recente Negativo", "risco": "ALTO", "acao_recomendada": "Atenção especial"},
-            1: {"nome": "Recente Positivo", "risco": "BAIXO", "acao_recomendada": "Manter engajamento"},
-            # ... outras personas
-        }
-    
-    def _load_model_and_transformer(self, model_path: Optional[str], transformer_path: Optional[str]):
-        """Carrega modelo usando estrutura otimizada"""
-        logger.info("📦 Carregando modelo...")
+    def validate_setup(self) -> bool:
+        """Valida usando configurações integradas"""
+        logger.info("🔍 Validando setup...")
         
         try:
-            # ✅ Usar diretórios corretos
-            if model_path is None:
-                model_path = self.models_dir / "latest_kmodes.pkl"
+            # ✅ Usar validação das configurações
+            is_valid, errors = self.settings.validate_config()
             
-            if transformer_path is None:
-                transformer_path = self.models_dir / "latest_transformer.pkl"
+            if not is_valid:
+                logger.error("❌ Configuração inválida:")
+                for error in errors:
+                    logger.error(f"   - {error}")
+                return False
             
-            # Verificar arquivos
-            for path in [model_path, transformer_path]:
-                if not Path(path).exists():
-                    raise FileNotFoundError(f"Arquivo não encontrado: {path}")
+            # ✅ Testar conexão com banco
+            if not self.settings.database.test_connection():
+                logger.error("❌ Falha na conexão com banco")
+                return False
             
-            # Carregar
-            self.model = joblib.load(model_path)
-            self.transformer = joblib.load(transformer_path)
-            
-            logger.info("✅ Modelo e transformer carregados")
+            logger.info("✅ Setup validado")
+            return True
             
         except Exception as e:
-            logger.error(f"❌ Erro ao carregar modelo: {e}")
+            logger.error(f"❌ Erro na validação: {e}")
+            return False
+    
+    def load_data(self, limit: Optional[int] = None) -> pd.DataFrame:
+        """Carrega dados usando extractor integrado"""
+        logger.info("📊 Carregando dados...")
+        
+        try:
+            # ✅ Usar limite das configurações se não especificado
+            if limit is None:
+                limit = self.settings.batch_size
+            
+            # ✅ Extrair usando método integrado
+            self.raw_data = self.extractor.extract_aggregated_data(limit=limit)
+            
+            if self.raw_data.empty:
+                raise ValueError("Nenhum dado extraído")
+            
+            logger.info(f"✅ Dados carregados: {len(self.raw_data):,} registros")
+            
+            # Salvar usando estrutura correta
+            self.data_dir.mkdir(exist_ok=True)
+            self.raw_data.to_csv(self.data_dir / "raw_data.csv", index=False)
+            
+            return self.raw_data
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao carregar dados: {e}")
             raise
     
-    def predict_from_database(self, contratos: Optional[List[str]] = None) -> pd.DataFrame:
-        """
-        Predições usando extractor integrado
-        """
-        logger.info("🗄️ Consultando dados...")
+    def train_model(self) -> dict:
+        """Treina usando configurações integradas"""
+        logger.info("🤖 Treinando modelo...")
         
         try:
-            # ✅ Usar método integrado do extractor
-            if contratos:
-                df = self.extractor.extract_customers_data(customer_ids=contratos)
-            else:
-                df = self.extractor.extract_customers_data(limit=settings.batch_size)
+            # ✅ Usar parâmetros das configurações
+            kmodes_params = self.kmodes_config.get_kmodes_params()
             
-            # ✅ Usar preprocessamento integrado
-            df_processed = preprocess_data(df)
+            # ✅ Usar engine integrada
+            self.model = self.kmodes_engine.fit(
+                self.features_for_model,
+                **kmodes_params
+            )
             
-            # ✅ Usar transformer integrado
-            df_transformed = self.transformer.transform(df_processed)
+            # ✅ Analisar usando analyzer integrado
+            clusters = self.model.predict(self.features_for_model)
+            analysis = self.analyzer.analyze_clusters(self.features_for_model, clusters)
             
-            # ✅ Usar features das configurações
-            features_used = kmodes_config.categorical_columns
-            available_features = [f for f in features_used if f in df_transformed.columns]
+            logger.info("✅ Modelo treinado e analisado")
             
-            if not available_features:
-                raise ValueError("Nenhuma feature configurada encontrada")
-            
-            # Predição
-            X = df_transformed[available_features]
-            clusters = self.model.predict(X)
-            
-            # Preparar resultados
-            results = df.copy()
-            results['cluster_pred'] = clusters
-            results['persona'] = [self.personas_info[c]['nome'] for c in clusters]
-            results['risco_churn'] = [self.personas_info[c]['risco'] for c in clusters]
-            results['acao_recomendada'] = [self.personas_info[c]['acao_recomendada'] for c in clusters]
-            results['data_predicao'] = datetime.now().isoformat()
-            
-            logger.info(f"✅ Predições geradas: {len(results):,} registros")
-            return results
+            return analysis
             
         except Exception as e:
-            logger.error(f"❌ Erro na predição: {e}")
+            logger.error(f"❌ Erro no treinamento: {e}")
+            raise
+    
+    def save_artifacts(self) -> dict:
+        """Salva usando estrutura correta"""
+        logger.info("💾 Salvando artefatos...")
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # ✅ Usar diretórios corretos
+            model_path = self.models_dir / f"kmodes_{timestamp}.pkl"
+            transformer_path = self.models_dir / f"transformer_{timestamp}.pkl"
+            
+            # Salvar
+            joblib.dump(self.model, model_path)
+            joblib.dump(self.transformer, transformer_path)
+            
+            # ✅ Criar links simbólicos
+            latest_model = self.models_dir / "latest_kmodes.pkl"
+            latest_transformer = self.models_dir / "latest_transformer.pkl"
+            
+            for path in [latest_model, latest_transformer]:
+                if path.exists():
+                    path.unlink()
+            
+            latest_model.symlink_to(model_path.name)
+            latest_transformer.symlink_to(transformer_path.name)
+            
+            metadata = {
+                'timestamp': timestamp,
+                'model_path': str(model_path),
+                'transformer_path': str(transformer_path),
+                'config_used': {
+                    'kmodes': self.kmodes_config.__dict__,
+                    'model': self.model_config.__dict__
+                }
+            }
+            
+            logger.info("✅ Artefatos salvos")
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao salvar: {e}")
             raise
